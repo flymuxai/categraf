@@ -1,0 +1,41 @@
+# Collect balance, group ratios, model availability, and incremental usage.
+# sub2api defaults to 5m when interval is omitted.
+interval = "5m"
+
+[[instances]]
+site = "supplier-sub2api"
+base_url = "https://supplier.example.com"
+
+# User access token is required for balance, group, and model discovery APIs.
+access_token = "@{env:SUB2API_ACCESS_TOKEN}"
+
+# Optional token rotation. Use a dedicated login session that is not shared
+# with a browser. Closing an incognito window is safe; logging out revokes its
+# refresh token. Rotated tokens are saved in the unified state file.
+refresh_token = "@{env:SUB2API_REFRESH_TOKEN}"
+state_file = "/var/lib/categraf/sub2api/supplier-state.json"
+
+# Applies to the actual upstream request after limiter waiting completes.
+timeout = "10s"
+response_limit_bytes = 8388608
+
+# Incremental /api/v1/usage scan. The timezone must match the sub2api user.
+usage_timezone = "Asia/Shanghai"
+
+# Shared token-bucket settings for all requests to this upstream origin.
+request_rps_limit = 1.0
+request_burst = 1
+
+# HTTP/TLS options supported by Categraf HTTP inputs.
+# http_proxy = "http://127.0.0.1:8080"
+# use_tls = true
+# tls_ca = "/etc/categraf/ca.pem"
+# insecure_skip_verify = false
+
+interval_times = 1
+# labels = { region = "cn", supplier = "example" }
+
+# Only groups represented here are monitored for model availability. The
+# collector discovers each key's current group through /api/v1/keys.
+[[instances.model_api_keys]]
+api_key = "@{env:SUB2API_MODEL_KEY_1}"

@@ -1,0 +1,29 @@
+# Collect balance, group ratios, model availability, and incremental usage from
+# New API. Defaults to 5m when omitted.
+interval = "5m"
+
+[[instances]]
+site = "supplier-newapi"
+base_url = "https://supplier.example.com"
+
+# The system access token generated from the user's profile. This is not an
+# sk-* model API key. Regenerating it immediately invalidates the old value.
+user_id = 1001
+access_token = "@{env:NEWAPI_ACCESS_TOKEN}"
+
+state_file = "/var/lib/categraf/newapi/supplier-state.json"
+
+# Shared token-bucket settings for all requests to this upstream origin.
+request_rps_limit = 1.0
+request_burst = 1
+
+timeout = "10s"
+response_limit_bytes = 8388608
+
+# HTTP/TLS options supported by Categraf HTTP inputs.
+# http_proxy = "http://127.0.0.1:8080"
+# use_tls = true
+# tls_ca = "/etc/categraf/ca.pem"
+# insecure_skip_verify = false
+
+# labels = { region = "cn", supplier = "example" }
