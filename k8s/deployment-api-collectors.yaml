@@ -1,0 +1,134 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  # Generic RWX claim intended to be shared by multiple workloads. Each
+  # workload must use its own subdirectory.
+  name: infra-shared-data
+  namespace: infra-system
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: vultr-vfs-storage
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n9e-categraf-api-collectors
+  namespace: infra-system
+  labels:
+    app.kubernetes.io/name: categraf
+    app.kubernetes.io/component: api-collectors
+spec:
+  replicas: 1
+  # sub2api refresh tokens are single-use. Recreate prevents an old and a new
+  # pod from overlapping during a rollout and racing to rotate the same token.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: categraf
+      app.kubernetes.io/component: api-collectors
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: categraf
+        app.kubernetes.io/component: api-collectors
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+      imagePullSecrets:
+        - name: vultr-registry
+      initContainers:
+        - name: prepare-state-directory
+          image: lax.vultrcr.com/flymux/categraf:v0.5.14.8
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -ec
+            - mkdir -p /shared/categraf/api-collectors
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+      containers:
+        - name: categraf
+          image: lax.vultrcr.com/flymux/categraf:v0.5.14.8
+          imagePullPolicy: Always
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            # Keep agent_hostname stable across pod replacements.
+            - name: HOSTNAME
+              value: n9e-categraf-api-collectors
+            - name: SUB2API_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sub2api-monitoring-credentials
+                  key: admin-api-key
+          volumeMounts:
+            # Hide every input bundled in the image. Only input directories
+            # explicitly mounted below will be visible to Categraf.
+            - name: conf-root
+              mountPath: /etc/categraf/conf
+            - name: categraf-config
+              mountPath: /etc/categraf/conf/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: categraf-config
+              mountPath: /etc/categraf/conf/logs.toml
+              subPath: logs.toml
+              readOnly: true
+            - name: input-sub2api
+              mountPath: /etc/categraf/conf/input.sub2api
+              readOnly: true
+            - name: input-sub2api-admin
+              mountPath: /etc/categraf/conf/input.sub2api_admin
+              readOnly: true
+            - name: input-newapi
+              mountPath: /etc/categraf/conf/input.newapi
+              readOnly: true
+            - name: input-http-response
+              mountPath: /etc/categraf/conf/input.http_response
+              readOnly: true
+            - name: shared-data
+              mountPath: /var/lib/categraf
+              subPath: categraf/api-collectors
+      volumes:
+        - name: conf-root
+          emptyDir: {}
+        - name: categraf-config
+          configMap:
+            name: categraf-config
+            items:
+              - key: config.toml
+                path: config.toml
+              - key: logs.toml
+                path: logs.toml
+        - name: input-sub2api
+          configMap:
+            name: input-sub2api
+        - name: input-sub2api-admin
+          configMap:
+            name: input-sub2api-admin
+        - name: input-newapi
+          configMap:
+            name: input-newapi
+        - name: input-http-response
+          configMap:
+            name: input-http-response
+        - name: shared-data
+          persistentVolumeClaim:
+            claimName: infra-shared-data

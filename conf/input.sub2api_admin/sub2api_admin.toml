@@ -1,0 +1,25 @@
+# Discover active proxies and test them through the Sub2API admin API.
+# sub2api_admin defaults to 5m when interval is omitted.
+interval = "5m"
+
+[[instances]]
+site = "sub2api-production"
+base_url = "https://sub2api.example.com"
+admin_api_key = "@{env:SUB2API_ADMIN_API_KEY}"
+
+# Probe at most ten proxies concurrently. A complete round is bounded by
+# gather_timeout, while timeout applies to each HTTP request.
+concurrency = 10
+timeout = "25s"
+gather_timeout = "4m"
+max_proxies = 100
+response_limit_bytes = 8388608
+
+# HTTP/TLS options supported by Categraf HTTP inputs.
+# http_proxy = "http://127.0.0.1:8080"
+# use_tls = true
+# tls_ca = "/etc/categraf/ca.pem"
+# insecure_skip_verify = false
+
+interval_times = 1
+# labels = { region = "cn" }
