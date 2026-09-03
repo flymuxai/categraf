@@ -31,6 +31,16 @@ func TestInstanceInitRequiresStateFile(t *testing.T) {
 	}
 }
 
+func TestInstanceInitRequiresRefreshToken(t *testing.T) {
+	ins := validConfigInstance(t)
+	ins.RefreshToken.Destroy()
+
+	err := ins.Init()
+	if err == nil || !strings.Contains(err.Error(), "refresh_token is required") {
+		t.Fatalf("Init() error = %v, want refresh_token validation", err)
+	}
+}
+
 func TestInstanceInitDefaultsRequestRate(t *testing.T) {
 	ins := validConfigInstance(t)
 
@@ -192,7 +202,6 @@ func validConfigInstance(t *testing.T) *Instance {
 	ins := &Instance{
 		Site:          "supplier-a",
 		BaseURL:       "https://supplier.example.com",
-		AccessToken:   config.NewSecret([]byte("configured-access")),
 		RefreshToken:  config.NewSecret([]byte("configured-refresh")),
 		StateFile:     filepath.Join(t.TempDir(), "state.json"),
 		UsageTimezone: "Asia/Shanghai",
@@ -202,7 +211,6 @@ func validConfigInstance(t *testing.T) *Instance {
 	}
 	t.Cleanup(func() {
 		ins.releaseRequestLimiter()
-		ins.AccessToken.Destroy()
 		ins.RefreshToken.Destroy()
 		for i := range ins.ModelAPIKeys {
 			ins.ModelAPIKeys[i].APIKey.Destroy()

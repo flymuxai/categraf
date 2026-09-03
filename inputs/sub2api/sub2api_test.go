@@ -92,6 +92,168 @@ func TestGatherCollectsBalanceGroupsAndModels(t *testing.T) {
 	}
 }
 
+func TestGatherBootstrapsAccessTokenFromRefreshToken(t *testing.T) {
+	t.Parallel()
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	refreshRequests := 0
+	resourceRequests := 0
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/v1/auth/refresh":
+			if resourceRequests != 0 {
+				t.Fatalf("refresh request followed %d resource requests", resourceRequests)
+			}
+			refreshRequests++
+			var body struct {
+				RefreshToken string `json:"refresh_token"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Fatalf("decode refresh body: %v", err)
+			}
+			if body.RefreshToken != "configured-refresh" {
+				t.Fatalf("refresh_token = %q, want configured-refresh", body.RefreshToken)
+			}
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":{"access_token":"bootstrapped-access","refresh_token":"rotated-refresh"}}`), nil
+		case "/api/v1/user/profile":
+			resourceRequests++
+			assertHeader(t, req, "Authorization", "Bearer bootstrapped-access")
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":{"balance":1}}`), nil
+		case "/api/v1/groups/available":
+			resourceRequests++
+			assertHeader(t, req, "Authorization", "Bearer bootstrapped-access")
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":[{"id":7,"name":"pro","platform":"anthropic","rate_multiplier":1}]}`), nil
+		case "/api/v1/groups/rates":
+			resourceRequests++
+			assertHeader(t, req, "Authorization", "Bearer bootstrapped-access")
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":{}}`), nil
+		case "/api/v1/keys":
+			resourceRequests++
+			assertHeader(t, req, "Authorization", "Bearer bootstrapped-access")
+			return jsonResponse(req, http.StatusOK, apiKeyPageJSON(1, 1, apiKeyJSON("group-token", 7, "active", "pro", "anthropic"))), nil
+		case "/v1/models":
+			resourceRequests++
+			assertHeader(t, req, "Authorization", "Bearer group-token")
+			return jsonResponse(req, http.StatusOK, `{"data":[]}`), nil
+		case "/api/v1/usage":
+			resourceRequests++
+			assertHeader(t, req, "Authorization", "Bearer bootstrapped-access")
+			return jsonResponse(req, http.StatusOK, usagePageJSON(1, 20, 1)), nil
+		default:
+			t.Fatalf("unexpected request path %q", req.URL.Path)
+			return nil, nil
+		}
+	})
+	client, err := llmupstream.NewClient("https://supplier.example.com", &http.Client{Transport: transport}, 1024*1024)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	cursorTime := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	ins := &Instance{
+		Site: "supplier-a", StateFile: stateFile, UsageTimezone: "Asia/Shanghai",
+		usageLocation: mustLocation(t, "Asia/Shanghai"), client: client,
+		refreshToken: "configured-refresh",
+		modelAPIKeys: []resolvedModelAPIKey{{APIKey: "group-token"}},
+		state: persistedState{Version: stateVersion, LastUsageID: 100, LastUsageCreatedAt: &cursorTime,
+			UsageInitialized: true, UsageSeries: make(map[string]*usageSeriesState)},
+	}
+
+	slist := types.NewSampleList()
+	ins.Gather(slist)
+	assertSample(t, slist.PopBackAll(), "sub2api_up", 1, map[string]string{"site": "supplier-a"})
+	if refreshRequests != 1 || resourceRequests == 0 {
+		t.Fatalf("refresh/resource requests = %d/%d, want 1/>0", refreshRequests, resourceRequests)
+	}
+
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", stateFile, err)
+	}
+	var state persistedState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("decode persisted state: %v", err)
+	}
+	if state.AccessToken != "bootstrapped-access" || state.RefreshToken != "rotated-refresh" {
+		t.Fatalf("persisted tokens = %q/%q", state.AccessToken, state.RefreshToken)
+	}
+	info, err := os.Stat(stateFile)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", stateFile, err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state permissions = %o, want 600", got)
+	}
+}
+
+func TestGatherRetriesBootstrapOnNextCollection(t *testing.T) {
+	t.Parallel()
+
+	refreshRequests := 0
+	resourceRequests := 0
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/v1/auth/refresh":
+			refreshRequests++
+			if refreshRequests == 1 {
+				return jsonResponse(req, http.StatusServiceUnavailable, `{"code":503,"message":"unavailable"}`), nil
+			}
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":{"access_token":"new-access","refresh_token":"new-refresh"}}`), nil
+		case "/api/v1/user/profile":
+			resourceRequests++
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":{"balance":1}}`), nil
+		case "/api/v1/groups/available":
+			resourceRequests++
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":[{"id":7,"name":"pro","platform":"anthropic","rate_multiplier":1}]}`), nil
+		case "/api/v1/groups/rates":
+			resourceRequests++
+			return jsonResponse(req, http.StatusOK, `{"code":0,"data":{}}`), nil
+		case "/api/v1/keys":
+			resourceRequests++
+			return jsonResponse(req, http.StatusOK, apiKeyPageJSON(1, 1, apiKeyJSON("group-token", 7, "active", "pro", "anthropic"))), nil
+		case "/v1/models":
+			resourceRequests++
+			return jsonResponse(req, http.StatusOK, `{"data":[]}`), nil
+		case "/api/v1/usage":
+			resourceRequests++
+			return jsonResponse(req, http.StatusOK, usagePageJSON(1, 20, 1)), nil
+		default:
+			t.Fatalf("unexpected request path %q", req.URL.Path)
+			return nil, nil
+		}
+	})
+	client, err := llmupstream.NewClient("https://bootstrap-retry.example.com", &http.Client{Transport: transport}, 1024*1024)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	cursorTime := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	ins := &Instance{
+		Site: "supplier-a", StateFile: filepath.Join(t.TempDir(), "state.json"), UsageTimezone: "Asia/Shanghai",
+		usageLocation: mustLocation(t, "Asia/Shanghai"), client: client,
+		refreshToken: "configured-refresh",
+		modelAPIKeys: []resolvedModelAPIKey{{APIKey: "group-token"}},
+		state: persistedState{Version: stateVersion, LastUsageID: 100, LastUsageCreatedAt: &cursorTime,
+			UsageInitialized: true, UsageSeries: make(map[string]*usageSeriesState)},
+	}
+
+	first := types.NewSampleList()
+	ins.Gather(first)
+	firstSamples := first.PopBackAll()
+	assertSample(t, firstSamples, "sub2api_up", 0, map[string]string{"site": "supplier-a"})
+	for _, resource := range []string{"balance", "groups", "models", "usage"} {
+		assertSample(t, firstSamples, "sub2api_scrape_success", 0, map[string]string{"site": "supplier-a", "resource": resource})
+	}
+	if refreshRequests != 1 || resourceRequests != 0 {
+		t.Fatalf("first refresh/resource requests = %d/%d, want 1/0", refreshRequests, resourceRequests)
+	}
+
+	second := types.NewSampleList()
+	ins.Gather(second)
+	assertSample(t, second.PopBackAll(), "sub2api_up", 1, map[string]string{"site": "supplier-a"})
+	if refreshRequests != 2 || resourceRequests == 0 {
+		t.Fatalf("total refresh/resource requests = %d/%d, want 2/>0", refreshRequests, resourceRequests)
+	}
+}
+
 func TestGatherRefreshesExpiredAccessTokenAndPersistsRotation(t *testing.T) {
 	t.Parallel()
 
@@ -554,13 +716,11 @@ func TestInitRestoresRotatedTokenState(t *testing.T) {
 	ins := &Instance{
 		Site:          "supplier-a",
 		BaseURL:       "https://supplier.example.com",
-		AccessToken:   config.NewSecret([]byte("configured-access")),
 		RefreshToken:  config.NewSecret([]byte("configured-refresh")),
 		StateFile:     stateFile,
 		UsageTimezone: "Asia/Shanghai",
 		ModelAPIKeys:  []ModelAPIKey{{APIKey: config.NewSecret([]byte("group-token"))}},
 	}
-	defer ins.AccessToken.Destroy()
 	defer ins.RefreshToken.Destroy()
 
 	if err := ins.Init(); err != nil {
@@ -581,12 +741,12 @@ func TestInitRejectsCorruptTokenState(t *testing.T) {
 	ins := &Instance{
 		Site:          "supplier-a",
 		BaseURL:       "https://supplier.example.com",
-		AccessToken:   config.NewSecret([]byte("configured-access")),
+		RefreshToken:  config.NewSecret([]byte("configured-refresh")),
 		StateFile:     stateFile,
 		UsageTimezone: "Asia/Shanghai",
 		ModelAPIKeys:  []ModelAPIKey{{APIKey: config.NewSecret([]byte("group-token"))}},
 	}
-	defer ins.AccessToken.Destroy()
+	defer ins.RefreshToken.Destroy()
 
 	err := ins.Init()
 	if err == nil || !strings.Contains(err.Error(), "decode state") {
@@ -667,7 +827,7 @@ func TestGatherRetriesPendingTokenStatePersistence(t *testing.T) {
 	}
 }
 
-func TestConfigurationParsesNestedModelAPIKeys(t *testing.T) {
+func TestConfigurationParsesNestedModelAPIKeysAndIgnoresAccessToken(t *testing.T) {
 	var plugin Sub2API
 	err := cfg.LoadSingleConfig(cfg.ConfigWithFormat{
 		Format: cfg.TomlFormat,
@@ -676,6 +836,7 @@ func TestConfigurationParsesNestedModelAPIKeys(t *testing.T) {
 site = "supplier"
 base_url = "https://example.com"
 access_token = "user-token"
+refresh_token = "refresh-token"
 state_file = "/tmp/sub2api-state.json"
 usage_timezone = "Asia/Shanghai"
 
@@ -688,6 +849,9 @@ api_key = "group-token"
 	}
 	if len(plugin.Instances) != 1 || len(plugin.Instances[0].ModelAPIKeys) != 1 {
 		t.Fatalf("parsed instances/model keys = %d/%d, want 1/1", len(plugin.Instances), len(plugin.Instances[0].ModelAPIKeys))
+	}
+	if plugin.Instances[0].accessToken != "" {
+		t.Fatalf("legacy access_token was not ignored: %q", plugin.Instances[0].accessToken)
 	}
 	key, err := secretString(&plugin.Instances[0].ModelAPIKeys[0].APIKey)
 	if err != nil || key != "group-token" {
@@ -702,6 +866,7 @@ func TestConfigurationRetainsLegacyFieldsForMigrationError(t *testing.T) {
 site = "supplier"
 base_url = "https://example.com"
 access_token = "user-token"
+refresh_token = "refresh-token"
 state_file = "/tmp/sub2api-state.json"
 usage_timezone = "Asia/Shanghai"
 usage_page_size = 50
