@@ -35,7 +35,6 @@ type Instance struct {
 
 	Site            string        `toml:"site"`
 	BaseURL         string        `toml:"base_url"`
-	AccessToken     config.Secret `toml:"access_token"`
 	RefreshToken    config.Secret `toml:"refresh_token"`
 	StateFile       string        `toml:"state_file"`
 	UsageTimezone   string        `toml:"usage_timezone"`
@@ -106,21 +105,17 @@ func (ins *Instance) Init() error {
 	if ins.RequestRPSLimit > 2 || ins.RequestBurst > 5 {
 		log.Printf("W! sub2api site=%s request limiter %.3g rps burst=%d may trigger upstream rate limits", ins.Site, ins.RequestRPSLimit, ins.RequestBurst)
 	}
-	accessToken, err := secretString(&ins.AccessToken)
-	if err != nil {
-		return fmt.Errorf("sub2api: resolve access_token: %w", err)
-	}
 	refreshToken, err := secretString(&ins.RefreshToken)
 	if err != nil {
 		return fmt.Errorf("sub2api: resolve refresh_token: %w", err)
 	}
-	ins.accessToken = accessToken
+	ins.accessToken = ""
 	ins.refreshToken = refreshToken
 	if err := ins.loadState(); err != nil {
 		return fmt.Errorf("sub2api: %w", err)
 	}
-	if ins.accessToken == "" {
-		return fmt.Errorf("sub2api: access_token is required")
+	if ins.refreshToken == "" {
+		return fmt.Errorf("sub2api: refresh_token is required")
 	}
 
 	if len(ins.ModelAPIKeys) == 0 {

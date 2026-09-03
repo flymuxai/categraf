@@ -45,6 +45,15 @@ func (ins *Instance) Gather(slist *types.SampleList) {
 	}
 	defer ins.endGather(gatherID)
 
+	if err := ins.ensureAccessToken(ctx); err != nil {
+		start := time.Now()
+		for _, resource := range []string{"balance", "groups", "models", "usage"} {
+			ins.emitResourceStatus(slist, resource, start, err)
+		}
+		slist.PushSample(inputName, "up", 0, ins.baseLabels())
+		return
+	}
+
 	allOK := true
 
 	start := time.Now()

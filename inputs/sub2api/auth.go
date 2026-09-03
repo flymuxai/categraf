@@ -63,6 +63,28 @@ type refreshData struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+func (ins *Instance) ensureAccessToken(ctx context.Context) error {
+	ins.authMu.Lock()
+	defer ins.authMu.Unlock()
+
+	if ins.tokenStateDirty {
+		if err := ins.persistStateLocked(); err != nil {
+			return fmt.Errorf("persist pending token state: %w", err)
+		}
+		ins.tokenStateDirty = false
+	}
+	if ins.accessToken != "" {
+		return nil
+	}
+	if ins.refreshToken == "" {
+		return fmt.Errorf("refresh token is required")
+	}
+	if err := ins.refreshLocked(ctx); err != nil {
+		return fmt.Errorf("refresh access token: %w", err)
+	}
+	return nil
+}
+
 func (ins *Instance) doUserJSON(ctx context.Context, method, endpoint string, query url.Values, body, out any) error {
 	ins.authMu.Lock()
 	if ins.tokenStateDirty {
