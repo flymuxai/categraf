@@ -6,12 +6,10 @@ interval = "5m"
 site = "supplier-sub2api"
 base_url = "https://supplier.example.com"
 
-# User access token is required for balance, group, and model discovery APIs.
-access_token = "@{env:SUB2API_ACCESS_TOKEN}"
-
-# Optional token rotation. Use a dedicated login session that is not shared
-# with a browser. Closing an incognito window is safe; logging out revokes its
-# refresh token. Rotated tokens are saved in the unified state file.
+# User authentication. On the first collection, the refresh token is exchanged
+# for an access/refresh token pair and saved in the unified state file. Use a
+# dedicated login session that is not shared with a browser. Closing an
+# incognito window is safe; logging out revokes its refresh token.
 refresh_token = "@{env:SUB2API_REFRESH_TOKEN}"
 state_file = "/var/lib/categraf/sub2api/supplier-state.json"
 

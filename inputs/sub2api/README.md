@@ -6,8 +6,9 @@ downstream user APIs.
 
 ## Authentication and state
 
-- `access_token` is used for balance, groups, `/api/v1/keys`, and
-  `/api/v1/usage`.
+- `refresh_token` is the only configured user credential. On the first
+  collection, it is exchanged for an access/refresh token pair. The access
+  token is then used for balance, groups, `/api/v1/keys`, and `/api/v1/usage`.
 - `model_api_keys` contains only model API key secrets. The input discovers
   each key's `group_id` through `/api/v1/keys`; groups without a configured key
   are intentionally skipped for model collection.
@@ -32,8 +33,7 @@ other client's saved refresh token invalid.
 Use a dedicated login session for each Categraf instance:
 
 1. Log in using a separate API login or an incognito browser window.
-2. Configure the `access_token` and `refresh_token` returned by that same
-   login response. Do not combine tokens from different sessions.
+2. Configure only the `refresh_token` returned by that login response.
 3. If using an incognito window, close the window after obtaining the tokens.
    Do not click **Log out**, because logout revokes the refresh token supplied
    by that session.
@@ -47,10 +47,12 @@ resetting the password, disabling the user, clearing the upstream refresh-token
 store (normally Redis), or another client using the same refresh token.
 
 On startup, non-empty tokens already stored in `state_file` take precedence
-over the configured environment variables. If a stored refresh token becomes
-invalid, merely changing `SUB2API_ACCESS_TOKEN` and `SUB2API_REFRESH_TOKEN` is
-not sufficient. Stop Categraf, configure a fresh dedicated token pair, and
-clear only the token fields while preserving the Usage cursor and counters:
+over the configured refresh token. If no access token has been persisted, the
+first collection exchanges the effective refresh token and saves the returned
+token pair before requesting user resources. If a stored refresh token becomes
+invalid, merely changing `SUB2API_REFRESH_TOKEN` is not sufficient. Stop
+Categraf, configure a fresh dedicated refresh token, and clear only the token
+fields while preserving the Usage cursor and counters:
 
 ```bash
 STATE_FILE=/var/lib/categraf/sub2api/supplier-state.json
@@ -85,10 +87,12 @@ All requests to the same normalized upstream origin share a
 `golang.org/x/time/rate` token bucket and a one-request concurrency gate. The
 defaults are one request per second with a burst of one. A bounded random delay
 is applied after token acquisition to avoid a perfectly periodic request
-pattern. HTTP 429 and 5xx responses are not retried; only a 401 can refresh the
-token and retry the current request once. Limiter waiting and jitter do not
-consume the HTTP timeout; the timeout starts when the actual upstream request
-begins.
+pattern. The first collection refreshes once when no access token is present;
+if that authentication preflight fails, all resources fail without making user
+API requests and the next collection tries again. After bootstrap, HTTP 429 and
+5xx responses are not retried; only a 401 can refresh the token and retry the
+current request once. Limiter waiting and jitter do not consume the HTTP
+timeout; the timeout starts when the actual upstream request begins.
 
 ## Incremental usage
 
