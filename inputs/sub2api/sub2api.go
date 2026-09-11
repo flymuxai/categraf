@@ -15,47 +15,34 @@ import (
 
 const inputName = "sub2api"
 
-type GroupAPIKey struct {
-	Group    string        `toml:"group"`
-	Platform string        `toml:"platform"`
-	APIKey   config.Secret `toml:"api_key"`
-}
-
-type ModelAPIKey struct {
-	APIKey config.Secret `toml:"api_key"`
-}
-
-type resolvedModelAPIKey struct {
-	APIKey string
-}
-
 type Instance struct {
 	config.InstanceConfig
 	config.HTTPCommonConfig
 
-	Site            string        `toml:"site"`
+	Name            string        `toml:"name"`
 	BaseURL         string        `toml:"base_url"`
-	RefreshToken    config.Secret `toml:"refresh_token"`
-	StateFile       string        `toml:"state_file"`
+	APIKey          config.Secret `toml:"api_key"`
+	CollectBilling  bool          `toml:"collect_billing"`
+	CollectModels   bool          `toml:"collect_models"`
 	UsageTimezone   string        `toml:"usage_timezone"`
 	RequestRPSLimit float64       `toml:"request_rps_limit"`
 	RequestBurst    int           `toml:"request_burst"`
-	ModelAPIKeys    []ModelAPIKey `toml:"model_api_keys"`
 	ResponseLimit   int64         `toml:"response_limit_bytes"`
 
-	LegacyUsagePageSize   *int             `toml:"usage_page_size"`
-	LegacyUsageMaxPages   *int             `toml:"usage_max_pages"`
-	LegacyUsageMaxCount   *int             `toml:"usage_max_count"`
-	LegacyRequestInterval *config.Duration `toml:"request_interval"`
-	LegacyGroupAPIKeys    []GroupAPIKey    `toml:"group_api_keys"`
+	LegacySite            *string      `toml:"site"`
+	LegacyRefreshToken    *string      `toml:"refresh_token"`
+	LegacyAccessToken     *string      `toml:"access_token"`
+	LegacyStateFile       *string      `toml:"state_file"`
+	LegacyUsagePageSize   *int         `toml:"usage_page_size"`
+	LegacyUsageMaxPages   *int         `toml:"usage_max_pages"`
+	LegacyUsageMaxCount   *int         `toml:"usage_max_count"`
+	LegacyRequestInterval *string      `toml:"request_interval"`
+	LegacyGroupAPIKeys    []legacyKey  `toml:"group_api_keys"`
+	LegacyModelAPIKeys    []legacyKey  `toml:"model_api_keys"`
 
 	client              *llmupstream.Client
 	limiterRegistration *llmupstream.RateLimitRegistration
-	accessToken         string
-	refreshToken        string
-	modelAPIKeys        []resolvedModelAPIKey
-	tokenStateDirty     bool
-	authMu              sync.Mutex
+	apiKey              string
 	redactionMu         sync.RWMutex
 	redactionSecrets    []string
 	lifecycleMu         sync.Mutex
@@ -63,32 +50,23 @@ type Instance struct {
 	nextGatherID        uint64
 	activeGatherCancels map[uint64]context.CancelFunc
 	activeGathersDone   chan struct{}
-	state               persistedState
-	usageLocation       *time.Location
-	startedAt           time.Time
+}
+
+type legacyKey struct {
+	Group    string `toml:"group"`
+	Platform string `toml:"platform"`
+	APIKey   string `toml:"api_key"`
 }
 
 func (ins *Instance) Init() error {
-	if strings.TrimSpace(ins.Site) == "" {
-		return fmt.Errorf("sub2api: site is required")
+	if err := ins.rejectLegacyConfiguration(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(ins.Name) == "" {
+		return fmt.Errorf("sub2api: name is required")
 	}
 	if strings.TrimSpace(ins.BaseURL) == "" {
 		return fmt.Errorf("sub2api: base_url is required")
-	}
-	if strings.TrimSpace(ins.StateFile) == "" {
-		return fmt.Errorf("sub2api: state_file is required")
-	}
-	if strings.TrimSpace(ins.UsageTimezone) == "" {
-		return fmt.Errorf("sub2api: usage_timezone is required")
-	}
-	location, err := time.LoadLocation(ins.UsageTimezone)
-	if err != nil {
-		return fmt.Errorf("sub2api: invalid usage_timezone %q: %w", ins.UsageTimezone, err)
-	}
-	ins.usageLocation = location
-	ins.startedAt = time.Now()
-	if err := ins.rejectLegacyConfiguration(); err != nil {
-		return err
 	}
 	if ins.RequestRPSLimit == 0 {
 		ins.RequestRPSLimit = 1
@@ -103,41 +81,18 @@ func (ins *Instance) Init() error {
 		return fmt.Errorf("sub2api: request_burst must be greater than zero")
 	}
 	if ins.RequestRPSLimit > 2 || ins.RequestBurst > 5 {
-		log.Printf("W! sub2api site=%s request limiter %.3g rps burst=%d may trigger upstream rate limits", ins.Site, ins.RequestRPSLimit, ins.RequestBurst)
-	}
-	refreshToken, err := secretString(&ins.RefreshToken)
-	if err != nil {
-		return fmt.Errorf("sub2api: resolve refresh_token: %w", err)
-	}
-	ins.accessToken = ""
-	ins.refreshToken = refreshToken
-	if err := ins.loadState(); err != nil {
-		return fmt.Errorf("sub2api: %w", err)
-	}
-	if ins.refreshToken == "" {
-		return fmt.Errorf("sub2api: refresh_token is required")
+		log.Printf("W! sub2api key=%s request limiter %.3g rps burst=%d may trigger upstream rate limits", ins.Name, ins.RequestRPSLimit, ins.RequestBurst)
 	}
 
-	if len(ins.ModelAPIKeys) == 0 {
-		return fmt.Errorf("sub2api: model_api_keys is required")
+	apiKey, err := secretString(&ins.APIKey)
+	if err != nil {
+		return fmt.Errorf("sub2api: resolve api_key: %w", err)
 	}
-	seen := make(map[string]struct{}, len(ins.ModelAPIKeys))
-	for i := range ins.ModelAPIKeys {
-		entry := &ins.ModelAPIKeys[i]
-		key, err := secretString(&entry.APIKey)
-		if err != nil {
-			return fmt.Errorf("sub2api: resolve model_api_keys[%d]: %w", i, err)
-		}
-		key = strings.TrimSpace(key)
-		if key == "" {
-			return fmt.Errorf("sub2api: api_key is required for model_api_keys[%d]", i)
-		}
-		if _, ok := seen[key]; ok {
-			return fmt.Errorf("sub2api: duplicate model API key at index %d", i)
-		}
-		seen[key] = struct{}{}
-		ins.modelAPIKeys = append(ins.modelAPIKeys, resolvedModelAPIKey{APIKey: key})
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return fmt.Errorf("sub2api: api_key is required")
 	}
+	ins.apiKey = apiKey
 	ins.updateRedactionSecrets()
 
 	httpClient, err := llmupstream.NewHTTPClient(&ins.HTTPCommonConfig)
@@ -235,16 +190,26 @@ func (ins *Instance) finishDrop(done <-chan struct{}) {
 
 func (ins *Instance) rejectLegacyConfiguration() error {
 	switch {
+	case ins.LegacySite != nil:
+		return fmt.Errorf("sub2api: 'site' was renamed to 'name'; rewrite the instance to use api_key auth")
+	case ins.LegacyRefreshToken != nil:
+		return fmt.Errorf("sub2api: 'refresh_token' auth was removed; supply 'api_key' instead")
+	case ins.LegacyAccessToken != nil:
+		return fmt.Errorf("sub2api: 'access_token' was removed; supply 'api_key' instead")
+	case ins.LegacyStateFile != nil:
+		return fmt.Errorf("sub2api: 'state_file' was removed; the API-key collector is stateless")
 	case ins.LegacyUsagePageSize != nil:
-		return fmt.Errorf("sub2api: usage_page_size was removed; page size is fixed at 20")
+		return fmt.Errorf("sub2api: 'usage_page_size' was removed; the /v1/usage endpoint returns pre-aggregated data")
 	case ins.LegacyUsageMaxPages != nil:
-		return fmt.Errorf("sub2api: usage_max_pages was removed; usage scans until the cursor or data end")
+		return fmt.Errorf("sub2api: 'usage_max_pages' was removed; the /v1/usage endpoint returns pre-aggregated data")
 	case ins.LegacyUsageMaxCount != nil:
-		return fmt.Errorf("sub2api: usage_max_count was removed; usage scans until the cursor or data end")
+		return fmt.Errorf("sub2api: 'usage_max_count' was removed; the /v1/usage endpoint returns pre-aggregated data")
 	case ins.LegacyRequestInterval != nil:
-		return fmt.Errorf("sub2api: request_interval was replaced by request_rps_limit and request_burst")
+		return fmt.Errorf("sub2api: 'request_interval' was replaced by request_rps_limit and request_burst")
 	case len(ins.LegacyGroupAPIKeys) > 0:
-		return fmt.Errorf("sub2api: group_api_keys was replaced by key-only model_api_keys")
+		return fmt.Errorf("sub2api: 'group_api_keys' was removed; one instance now represents one api_key")
+	case len(ins.LegacyModelAPIKeys) > 0:
+		return fmt.Errorf("sub2api: 'model_api_keys' was removed; one instance now represents one api_key")
 	default:
 		return nil
 	}
