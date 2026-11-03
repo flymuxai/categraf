@@ -219,6 +219,9 @@ func secretString(secret *config.Secret) (string, error) {
 	if secret.Empty() {
 		return "", nil
 	}
+	if err := secret.LinkEnv(); err != nil {
+		return "", err
+	}
 	buffer, err := secret.Get()
 	if err != nil {
 		return "", err

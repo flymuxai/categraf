@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"flashcat.cloud/categraf/config"
 	"flashcat.cloud/categraf/inputs/internal/llmupstream"
+	"flashcat.cloud/categraf/pkg/cfg"
 	"flashcat.cloud/categraf/types"
 )
 
@@ -356,4 +358,39 @@ func hasLabels(got, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestDistributedConfigurationResolvesAdminAPIKeyFromEnvironment(t *testing.T) {
+	t.Setenv("SUB2API_ADMIN_API_KEY", "admin-key-from-env")
+	data, err := os.ReadFile("../../conf/input.sub2api_admin/sub2api_admin.toml")
+	if err != nil {
+		t.Fatalf("read distributed config: %v", err)
+	}
+	var plugin Sub2APIAdmin
+	if err := cfg.LoadSingleConfig(cfg.ConfigWithFormat{Format: cfg.TomlFormat, Config: string(data)}, &plugin); err != nil {
+		t.Fatalf("load distributed config: %v", err)
+	}
+	ins := plugin.Instances[0]
+	if err := ins.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	defer ins.drop()
+	if ins.adminAPIKey != "admin-key-from-env" {
+		t.Fatalf("admin_api_key resolved to %q", ins.adminAPIKey)
+	}
+}
+
+func TestInitReportsUnsetAdminAPIKeyVariable(t *testing.T) {
+	ins := &Instance{
+		Site:        "production",
+		BaseURL:     "https://example.com",
+		AdminAPIKey: config.NewSecret([]byte("@{env:SUB2API_ADMIN_TEST_UNSET_KEY}")),
+	}
+	err := ins.Init()
+	if err == nil {
+		ins.drop()
+	}
+	if err == nil || !strings.Contains(err.Error(), "SUB2API_ADMIN_TEST_UNSET_KEY") {
+		t.Fatalf("Init() error = %v, want the missing variable name", err)
+	}
 }

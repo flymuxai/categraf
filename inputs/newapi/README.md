@@ -14,6 +14,9 @@ The system access token does not expire automatically, but generating a new one
 immediately invalidates the old value. Update the Categraf secret whenever the
 token is regenerated.
 
+`access_token` accepts `@{env:NAME}`, resolved once at Init from the Categraf
+process environment; an unset variable fails Init with the variable's name.
+
 The plugin defaults to a five-minute interval. Requests to the same normalized
 upstream origin share a token bucket and a one-request concurrency gate with
 other newapi and sub2api instances. The defaults are one request per second

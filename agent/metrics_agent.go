@@ -98,6 +98,7 @@ import (
 	_ "flashcat.cloud/categraf/inputs/sub2api"
 	_ "flashcat.cloud/categraf/inputs/sub2api_admin"
 	_ "flashcat.cloud/categraf/inputs/supervisor"
+	_ "flashcat.cloud/categraf/inputs/supplier"
 	_ "flashcat.cloud/categraf/inputs/switch_legacy"
 	_ "flashcat.cloud/categraf/inputs/system"
 	_ "flashcat.cloud/categraf/inputs/systemd"

@@ -1,0 +1,54 @@
+# Monitor prepaid supplier balances. One [[instances]] block = one supplier
+# account. Every provider reports supplier_balance{supplier,provider,unit}, so
+# one set of alert rules covers all suppliers. Defaults to 5m when omitted.
+interval = "5m"
+
+# provider = "lynxton": GET <base_url>/v1/account/balance with a Bearer sk- key.
+[[instances]]
+supplier = "lynxton"
+provider = "lynxton"
+base_url = "https://tokens.lynxtoncloud.com"
+
+# Any sk- key of the account works; the balance is the account's, not the
+# token's. Use a dedicated monitoring token with a tiny token quota.
+# @{env:NAME} reads the variable from the Categraf process environment once at
+# startup; a missing variable fails the instance.
+api_key = "@{env:LYNXTON_API_KEY}"
+
+# owner/admin keys return the organization pool ("org_pool"), member keys
+# return their own allowance ("personal"). A mismatch fails the scrape.
+expect_scope = "org_pool"
+
+# Raw quota units per display unit, used to convert used_quota into
+# supplier_spent_total. A mismatch with the response is logged and skips it.
+# quota_per_unit = 500000
+
+# Same unit as the balance (here CNY). Exported as
+# supplier_balance_low_threshold for the shared alert rule.
+balance_low_threshold = 50
+timeout = "10s"
+
+# provider = "epay": 彩虹易支付-style GET <base_url>/api.php?act=query&pid=&key=
+[[instances]]
+supplier = "payqixiang"
+provider = "epay"
+base_url = "https://api.payqixiang.cn"
+pid      = 3407
+
+# The merchant key also signs payment requests and callbacks. Keep it out of
+# git and configure it on a single trusted collector only.
+api_key = "@{env:PAYQIXIANG_KEY}"
+
+# The query response has no currency field. Defaults to CNY.
+# unit = "CNY"
+
+balance_low_threshold = 100
+timeout = "10s"
+
+# Other per-instance options, valid for every provider. Without an explicit
+# timeout, Categraf's HTTP default of 3s applies.
+# response_limit_bytes = 8388608
+# request_rps_limit    = 1.0   # shared token bucket per upstream origin
+# request_burst        = 1
+# http_proxy           = "http://127.0.0.1:8080"
+# labels               = { team = "finance" }

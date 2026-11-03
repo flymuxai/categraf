@@ -11,6 +11,9 @@ Set `api_key` to a sub2api API key. Every request goes out as
 `Authorization: Bearer <api_key>`. Nothing else is needed — bootstrap and
 rotation logic have been removed together with the state file.
 
+`api_key` accepts `@{env:NAME}`, resolved once at Init from the Categraf
+process environment; an unset variable fails Init with the variable's name.
+
 The raw key never appears in metrics, labels, or logs. Error messages from
 the upstream are scrubbed for the configured key and for anything that looks
 like a bearer token before being surfaced.

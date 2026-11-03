@@ -608,10 +608,70 @@ func mergeLabelsForTest(base map[string]string, kv ...string) map[string]string 
 }
 
 // captureLogs redirects the standard logger to a buffer so tests can assert
-// that raw secrets never appear in log output.
-func captureLogs() (*strings.Builder, func()) {
-	buf := &strings.Builder{}
+// that raw secrets never appear in log output. Parallel tests keep logging
+// through the global logger while the buffer is installed, so the buffer is
+// guarded and capturing tests run one at a time.
+func captureLogs() (*lockedBuilder, func()) {
+	captureLogsMu.Lock()
+	buf := &lockedBuilder{}
 	previous := log.Writer()
 	log.SetOutput(buf)
-	return buf, func() { log.SetOutput(previous) }
+	return buf, func() {
+		log.SetOutput(previous)
+		captureLogsMu.Unlock()
+	}
+}
+
+var captureLogsMu sync.Mutex
+
+type lockedBuilder struct {
+	mu sync.Mutex
+	sb strings.Builder
+}
+
+func (b *lockedBuilder) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sb.Write(p)
+}
+
+func (b *lockedBuilder) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sb.String()
+}
+
+func TestDistributedConfigurationResolvesAPIKeyFromEnvironment(t *testing.T) {
+	t.Setenv("SUB2API_API_KEY", "key-from-env")
+	data, err := os.ReadFile("../../conf/input.sub2api/sub2api.toml")
+	if err != nil {
+		t.Fatalf("read distributed config: %v", err)
+	}
+	var plugin Sub2API
+	if err := cfg.LoadSingleConfig(cfg.ConfigWithFormat{Format: cfg.TomlFormat, Config: string(data)}, &plugin); err != nil {
+		t.Fatalf("load distributed config: %v", err)
+	}
+	ins := plugin.Instances[0]
+	if err := ins.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	defer ins.drop()
+	if ins.apiKey != "key-from-env" {
+		t.Fatalf("api_key resolved to %q", ins.apiKey)
+	}
+}
+
+func TestInitReportsUnsetAPIKeyVariable(t *testing.T) {
+	ins := &Instance{
+		Name:    "prod-key",
+		BaseURL: "https://supplier.example.com",
+		APIKey:  config.NewSecret([]byte("@{env:SUB2API_TEST_UNSET_KEY}")),
+	}
+	err := ins.Init()
+	if err == nil {
+		ins.drop()
+	}
+	if err == nil || !strings.Contains(err.Error(), "SUB2API_TEST_UNSET_KEY") {
+		t.Fatalf("Init() error = %v, want the missing variable name", err)
+	}
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"flashcat.cloud/categraf/config"
 	"flashcat.cloud/categraf/inputs/internal/llmupstream"
 	"flashcat.cloud/categraf/pkg/cfg"
 	"flashcat.cloud/categraf/types"
@@ -297,5 +299,44 @@ func numericValue(value any) (float64, bool) {
 		return v, true
 	default:
 		return 0, false
+	}
+}
+
+func TestDistributedConfigurationResolvesAccessTokenFromEnvironment(t *testing.T) {
+	t.Setenv("NEWAPI_ACCESS_TOKEN", "token-from-env")
+	data, err := os.ReadFile("../../conf/input.newapi/newapi.toml")
+	if err != nil {
+		t.Fatalf("read distributed config: %v", err)
+	}
+	var plugin NewAPI
+	if err := cfg.LoadSingleConfig(cfg.ConfigWithFormat{Format: cfg.TomlFormat, Config: string(data)}, &plugin); err != nil {
+		t.Fatalf("load distributed config: %v", err)
+	}
+	ins := plugin.Instances[0]
+	// The shipped state_file path is outside the test sandbox.
+	ins.StateFile = filepath.Join(t.TempDir(), "state.json")
+	if err := ins.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	defer plugin.Drop()
+	if ins.accessToken != "token-from-env" {
+		t.Fatalf("access_token resolved to %q", ins.accessToken)
+	}
+}
+
+func TestInitReportsUnsetAccessTokenVariable(t *testing.T) {
+	ins := &Instance{
+		Site:        "supplier",
+		BaseURL:     "https://example.com",
+		UserID:      1001,
+		AccessToken: config.NewSecret([]byte("@{env:NEWAPI_TEST_UNSET_TOKEN}")),
+		StateFile:   filepath.Join(t.TempDir(), "state.json"),
+	}
+	err := ins.Init()
+	if err == nil {
+		(&NewAPI{Instances: []*Instance{ins}}).Drop()
+	}
+	if err == nil || !strings.Contains(err.Error(), "NEWAPI_TEST_UNSET_TOKEN") {
+		t.Fatalf("Init() error = %v, want the missing variable name", err)
 	}
 }
