@@ -39,10 +39,6 @@ type Instance struct {
 	BaseURL  string        `toml:"base_url"`
 	APIKey   config.Secret `toml:"api_key"`
 
-	// Emitted as supplier_balance_low_threshold so one alert rule can cover
-	// every supplier.
-	BalanceLowThreshold *float64 `toml:"balance_low_threshold"`
-
 	// lynxton only.
 	ExpectScope  string  `toml:"expect_scope"`
 	QuotaPerUnit float64 `toml:"quota_per_unit"`
@@ -97,9 +93,6 @@ func (ins *Instance) Init() error {
 	}
 	if err := ins.validateProvider(); err != nil {
 		return fmt.Errorf("supplier %s: %w", ins.Supplier, err)
-	}
-	if t := ins.BalanceLowThreshold; t != nil && (math.IsNaN(*t) || math.IsInf(*t, 0)) {
-		return fmt.Errorf("supplier %s: balance_low_threshold must be a finite number", ins.Supplier)
 	}
 
 	if ins.RequestRPSLimit == 0 {

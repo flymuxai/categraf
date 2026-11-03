@@ -51,11 +51,7 @@ func (ins *Instance) Gather(slist *types.SampleList) {
 	slist.PushSample(inputName, "up", 1, base)
 	slist.PushSample(inputName, "last_success_timestamp_seconds", time.Now().Unix(), base)
 
-	unitLabel := map[string]string{"unit": r.unit}
-	slist.PushSample(inputName, "balance", r.balance, mergeLabels(base, r.labels, unitLabel))
-	if t := ins.BalanceLowThreshold; t != nil {
-		slist.PushSample(inputName, "balance_low_threshold", *t, mergeLabels(base, unitLabel))
-	}
+	slist.PushSample(inputName, "balance", r.balance, mergeLabels(base, r.labels, map[string]string{"unit": r.unit}))
 	for _, extra := range r.extras {
 		slist.PushSample(inputName, extra.metric, extra.value, mergeLabels(base, extra.labels))
 	}

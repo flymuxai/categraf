@@ -22,8 +22,8 @@ with every other `supplier`, `newapi` and `sub2api` instance. Failures are not
 retried within a collection.
 
 Common keys: `supplier` (label value), `provider`, `base_url`, `api_key`,
-`balance_low_threshold`, plus the usual Categraf HTTP options (`timeout`,
-`http_proxy`, TLS).
+plus the usual Categraf HTTP options (`timeout`, `http_proxy`, TLS). The
+plugin only reports values; alert thresholds belong in the alert rules.
 
 ### lynxton
 
@@ -74,7 +74,6 @@ Every metric carries `supplier` and `provider`.
 | Metric | Labels | Providers | Notes |
 |---|---|---|---|
 | `supplier_balance` | `unit`, `scope` (lynxton) | all | Remaining prepaid balance |
-| `supplier_balance_low_threshold` | `unit` | all | Only when `balance_low_threshold` is set |
 | `supplier_spent_total` | `unit`, `scope` | lynxton | Cumulative spend |
 | `supplier_account_active` | | epay | 1 = enabled, 0 = disabled |
 | `supplier_orders_total` | | epay | Lifetime order count |
@@ -89,9 +88,9 @@ collector does not trigger balance alerts. Alert on `supplier_up` instead.
 ## Alert rules
 
 ```promql
-# Balance below the per-supplier threshold. New suppliers only need a config
-# block, not a new rule.
-supplier_balance < on(supplier) supplier_balance_low_threshold
+# Balance below a per-supplier threshold, in the balance's unit (CNY here).
+supplier_balance{supplier="lynxton"} < 50
+supplier_balance{supplier="payqixiang"} < 100
 
 # At the trend of the last 6 hours, the balance reaches 0 within 24 hours.
 # A top-up makes the slope positive, so it does not fire right after one.
@@ -105,5 +104,5 @@ supplier_up == 0
 supplier_account_active == 0
 ```
 
-Collect each supplier on one Categraf instance only. Duplicate series from
-several collectors break the `on(supplier)` match.
+Collect each supplier on one Categraf instance only. Several collectors would
+send duplicate series and fire duplicate alerts.

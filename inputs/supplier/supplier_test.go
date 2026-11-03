@@ -38,7 +38,7 @@ const epayQueryBody = `{"code":1,"pid":3407,"key":"Ep4yK3y+with/special=chars","
 // lynxton
 // -----------------------------------------------------------------------------
 
-func TestLynxtonEmitsBalanceSpentAndThreshold(t *testing.T) {
+func TestLynxtonEmitsBalanceAndSpent(t *testing.T) {
 	t.Parallel()
 
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -54,8 +54,6 @@ func TestLynxtonEmitsBalanceSpentAndThreshold(t *testing.T) {
 		return jsonResponse(req, http.StatusOK, lynxtonOrgPoolBody), nil
 	})
 	ins := newLynxtonInstance(t, transport)
-	threshold := 50.0
-	ins.BalanceLowThreshold = &threshold
 	ins.ExpectScope = "org_pool"
 
 	samples := gather(ins)
@@ -64,7 +62,6 @@ func TestLynxtonEmitsBalanceSpentAndThreshold(t *testing.T) {
 	assertSample(t, samples, "supplier_up", 1, base)
 	assertSample(t, samples, "supplier_balance", 103.485652, with(base, "unit", "CNY", "scope", "org_pool"))
 	assertSample(t, samples, "supplier_spent_total", 58257174.0/500000, with(base, "unit", "CNY", "scope", "org_pool"))
-	assertSample(t, samples, "supplier_balance_low_threshold", 50, with(base, "unit", "CNY"))
 	assertPresent(t, samples, "supplier_scrape_duration_seconds", base)
 	assertPresent(t, samples, "supplier_last_success_timestamp_seconds", base)
 }
@@ -144,8 +141,6 @@ func TestEpayEmitsBalanceStatusAndOrders(t *testing.T) {
 		return jsonResponse(req, http.StatusOK, epayQueryBody), nil
 	})
 	ins := newEpayInstance(t, transport)
-	threshold := 100.0
-	ins.BalanceLowThreshold = &threshold
 
 	logs, restore := captureLogs()
 	defer restore()
@@ -154,7 +149,6 @@ func TestEpayEmitsBalanceStatusAndOrders(t *testing.T) {
 	base := map[string]string{"supplier": "payqixiang", "provider": "epay"}
 	assertSample(t, samples, "supplier_up", 1, base)
 	assertSample(t, samples, "supplier_balance", 200.44, with(base, "unit", "CNY"))
-	assertSample(t, samples, "supplier_balance_low_threshold", 100, with(base, "unit", "CNY"))
 	assertSample(t, samples, "supplier_account_active", 1, base)
 	assertSample(t, samples, "supplier_orders_total", 4813, base)
 	assertSample(t, samples, "supplier_orders_today", 21, base)

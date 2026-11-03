@@ -1,6 +1,7 @@
 # Monitor prepaid supplier balances. One [[instances]] block = one supplier
-# account. Every provider reports supplier_balance{supplier,provider,unit}, so
-# one set of alert rules covers all suppliers. Defaults to 5m when omitted.
+# account. Every provider reports supplier_balance{supplier,provider,unit}.
+# Alert thresholds belong in the alert rules; this plugin only reports values.
+# Defaults to 5m when omitted.
 interval = "5m"
 
 # provider = "lynxton": GET <base_url>/v1/account/balance with a Bearer sk- key.
@@ -23,9 +24,6 @@ expect_scope = "org_pool"
 # supplier_spent_total. A mismatch with the response is logged and skips it.
 # quota_per_unit = 500000
 
-# Same unit as the balance (here CNY). Exported as
-# supplier_balance_low_threshold for the shared alert rule.
-balance_low_threshold = 50
 timeout = "10s"
 
 # provider = "epay": 彩虹易支付-style GET <base_url>/api.php?act=query&pid=&key=
@@ -42,7 +40,6 @@ api_key = "@{env:PAYQIXIANG_KEY}"
 # The query response has no currency field. Defaults to CNY.
 # unit = "CNY"
 
-balance_low_threshold = 100
 timeout = "10s"
 
 # Other per-instance options, valid for every provider. Without an explicit
